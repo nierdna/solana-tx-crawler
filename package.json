@@ -1,0 +1,27 @@
+{
+  "name": "solana-tx-crawler",
+  "version": "1.0.0",
+  "description": "Solana transaction crawler for Ore program",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["solana", "crawler", "mongodb"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.95.2",
+    "mongodb": "^6.3.0",
+    "dotenv": "^16.4.5",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
+
