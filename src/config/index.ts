@@ -15,6 +15,7 @@ export const config = {
     batchSize: parseInt(process.env.BATCH_SIZE || '100', 10),
     signaturesBatchSize: parseInt(process.env.SIGNATURES_BATCH_SIZE || '1000', 10),
     requestDelayMs: parseInt(process.env.REQUEST_DELAY_MS || '100', 10),
+    skipBackfill: process.env.SKIP_BACKFILL === 'true',
   },
   retry: {
     maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10),

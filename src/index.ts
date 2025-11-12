@@ -43,24 +43,28 @@ class SolanaCrawlerApp {
    */
   async run(): Promise<void> {
     try {
-      // Check backfill status
-      const backfillState = await this.mongoManager.getCrawlState('backfill');
-      
-      if (!backfillState || backfillState.status === 'in_progress') {
-        // Start or resume backfill
-        logger.info('=== BACKFILL PHASE ===');
-        await this.backfillService.start();
-        
-        if (this.isShuttingDown) {
-          logger.info('Shutdown requested during backfill');
-          return;
-        }
-        
-        // Show statistics after backfill
-        await this.showStatistics();
+      if (config.crawler.skipBackfill) {
+        logger.info('SKIP_BACKFILL flag detected, skipping backfill phase.');
       } else {
-        logger.info('Backfill already completed');
-        await this.showStatistics();
+        // Check backfill status
+        const backfillState = await this.mongoManager.getCrawlState('backfill');
+
+        if (!backfillState || backfillState.status === 'in_progress') {
+          // Start or resume backfill
+          logger.info('=== BACKFILL PHASE ===');
+          await this.backfillService.start();
+
+          if (this.isShuttingDown) {
+            logger.info('Shutdown requested during backfill');
+            return;
+          }
+
+          // Show statistics after backfill
+          await this.showStatistics();
+        } else {
+          logger.info('Backfill already completed');
+          await this.showStatistics();
+        }
       }
 
       // After backfill is complete, run forward crawler

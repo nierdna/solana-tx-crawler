@@ -1,6 +1,7 @@
 import { SolanaClient } from './solana-client';
 import { MongoManager } from '../database/mongo';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import { Transaction, CrawlState } from '../database/schemas';
 import { ConfirmedSignatureInfo } from '@solana/web3.js';
 
@@ -8,6 +9,7 @@ export class ForwardCrawler {
   private solanaClient: SolanaClient;
   private mongoManager: MongoManager;
   private shouldStop: boolean = false;
+  private pollIntervalMs: number = Math.max(config.crawler.requestDelayMs, 1000);
 
   constructor(solanaClient: SolanaClient, mongoManager: MongoManager) {
     this.solanaClient = solanaClient;
@@ -32,85 +34,147 @@ export class ForwardCrawler {
       }
 
       // Determine the target signature (where backfill started)
-      let targetSignature: string;
-      
-      if (backfillState.backfillStartSignature) {
-        // Use the saved start signature (most accurate)
-        targetSignature = backfillState.backfillStartSignature;
-        logger.info(`Using backfill start signature as target: ${targetSignature}`);
-        logger.info(`This ensures no gap between backfill start and current time`);
-      } else {
-        // Fallback: use latest from DB (old behavior)
-        const latestTx = await this.mongoManager.getLatestTransaction();
-        if (!latestTx) {
-          logger.warn('No transactions in database and no backfill start signature.');
-          return;
-        }
-        targetSignature = latestTx.signature;
-        logger.warn(`No backfill start signature found. Using latest from DB: ${targetSignature}`);
-        logger.warn(`This may result in a gap if backfill took a long time.`);
+      const targetSignature = await this.resolveInitialTarget(backfillState);
+      if (!targetSignature) {
+        return;
       }
 
-      let totalProcessed = 0;
-      let hasMore = true;
-      let beforeSignature: string | undefined = undefined; // Start from absolute latest
-      let iterationCount = 0;
-
       logger.info('Starting gap-fill loop...');
+      const gapProcessed = await this.catchUpToTarget(targetSignature, 'Gap fill');
+      await this.recordForwardProgress(gapProcessed);
 
-      // Loop to fill the gap from current to target signature
-      while (hasMore && !this.shouldStop) {
-        iterationCount++;
-        logger.info(`Forward crawl iteration ${iterationCount}`);
+      if (this.shouldStop) {
+        logger.info('Shutdown requested during gap fill. Exiting forward crawler.');
+        return;
+      }
 
-        // Fetch signatures with 'before' for pagination, 'until' as stop point
-        const signatures = await this.solanaClient.getSignaturesForAddress({
-          before: beforeSignature,
-          until: targetSignature,
-        });
+      logger.info('Entering continuous forward crawl loop...');
 
-        if (signatures.length === 0) {
-          logger.info('No more new transactions. Gap fully filled!');
-          hasMore = false;
+      while (!this.shouldStop) {
+        const latestTx = await this.mongoManager.getLatestTransaction();
+
+        if (!latestTx) {
+          logger.warn('No transactions in database. Waiting before retrying forward crawl.');
+          await this.sleep(this.pollIntervalMs);
+          continue;
+        }
+
+        const processed = await this.catchUpToTarget(latestTx.signature, 'Realtime follow-up');
+
+        if (this.shouldStop) {
+          logger.info('Shutdown requested during forward crawl loop.');
           break;
         }
 
-        logger.info(`Found ${signatures.length} new transactions in this batch`);
+        await this.recordForwardProgress(processed);
 
-        // Process the new signatures
-        const processedCount = await this.processSignaturesBatch(signatures);
-        totalProcessed += processedCount;
-
-        // Update beforeSignature for next iteration
-        // Last signature in array is the oldest in this batch
-        beforeSignature = signatures[signatures.length - 1].signature;
-
-        logger.info(
-          `Processed ${processedCount} transactions. ` +
-          `Total new: ${totalProcessed}. Last signature: ${beforeSignature}`
-        );
-      }
-
-      // Update forward crawler state with the absolute latest
-      if (totalProcessed > 0) {
-        const absoluteLatest = await this.mongoManager.getLatestTransaction();
-        if (absoluteLatest) {
-          await this.updateForwardCrawlState(
-            absoluteLatest.signature,
-            absoluteLatest.slot || 0,
-            'completed',
-            totalProcessed
-          );
+        if (processed === 0) {
+          logger.debug('No new transactions found. Sleeping before next poll.');
+          await this.sleep(this.pollIntervalMs);
         }
-      } else {
-        logger.info('Database was already up to date. No new transactions.');
       }
 
-      logger.info(`Forward crawl completed! Total processed: ${totalProcessed} new transactions`);
+      logger.info('Forward crawler loop exited.');
     } catch (error) {
       logger.error('Forward crawler encountered an error', error);
       throw error;
     }
+  }
+
+  /**
+   * Determine starting target signature for gap fill
+   */
+  private async resolveInitialTarget(
+    backfillState: CrawlState
+  ): Promise<string | undefined> {
+    if (backfillState.backfillStartSignature) {
+      logger.info(`Using backfill start signature as target: ${backfillState.backfillStartSignature}`);
+      logger.info('This ensures no gap between backfill start and current time');
+      return backfillState.backfillStartSignature;
+    }
+
+    const latestTx = await this.mongoManager.getLatestTransaction();
+    if (!latestTx) {
+      logger.warn('No transactions in database and no backfill start signature.');
+      return undefined;
+    }
+
+    logger.warn(`No backfill start signature found. Using latest from DB: ${latestTx.signature}`);
+    logger.warn('This may result in a gap if backfill took a long time.');
+    return latestTx.signature;
+  }
+
+  /**
+   * Catch up until the provided signature
+   */
+  private async catchUpToTarget(
+    targetSignature: string,
+    context: string
+  ): Promise<number> {
+    let totalProcessed = 0;
+    let beforeSignature: string | undefined;
+    let iterationCount = 0;
+
+    while (!this.shouldStop) {
+      iterationCount++;
+      logger.info(`${context} iteration ${iterationCount}`);
+
+      const signatures = await this.solanaClient.getSignaturesForAddress({
+        before: beforeSignature,
+        until: targetSignature,
+      });
+
+      if (signatures.length === 0) {
+        if (totalProcessed === 0) {
+          logger.info(`${context} found no new transactions. Gap fully filled.`);
+        } else {
+          logger.info(`${context} gap fully filled.`);
+        }
+        break;
+      }
+
+      logger.info(`${context} fetched ${signatures.length} signatures in this batch`);
+
+      const processedCount = await this.processSignaturesBatch(signatures);
+      totalProcessed += processedCount;
+
+      beforeSignature = signatures[signatures.length - 1].signature;
+
+      logger.info(
+        `${context} processed ${processedCount} transactions. Total new: ${totalProcessed}. Last signature: ${beforeSignature}`
+      );
+    }
+
+    return totalProcessed;
+  }
+
+  /**
+   * Update forward crawl state after processing new transactions
+   */
+  private async recordForwardProgress(processed: number): Promise<void> {
+    if (processed === 0) {
+      return;
+    }
+
+    const latestTx = await this.mongoManager.getLatestTransaction();
+    if (!latestTx) {
+      logger.warn('Unable to update forward state: latest transaction not found.');
+      return;
+    }
+
+    const forwardState = await this.mongoManager.getCrawlState('forward');
+    const totalProcessed = (forwardState?.totalProcessed || 0) + processed;
+
+    await this.updateForwardCrawlState(
+      latestTx.signature,
+      latestTx.slot || 0,
+      'completed',
+      totalProcessed
+    );
+
+    logger.info(
+      `Forward crawl processed ${processed} new transactions (cumulative: ${totalProcessed}).`
+    );
   }
 
   /**
@@ -183,6 +247,13 @@ export class ForwardCrawler {
   stop(): void {
     logger.info('Stopping forward crawler...');
     this.shouldStop = true;
+  }
+
+  /**
+   * Sleep helper
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
