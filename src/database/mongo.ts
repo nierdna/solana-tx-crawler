@@ -2,6 +2,8 @@ import { MongoClient, Db, Collection } from 'mongodb';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { Transaction, CrawlState, COLLECTIONS } from './schemas';
+import { getPublisher } from '../queue/rabbitmq-publisher';
+import { TransactionMessage } from '../queue/types';
 
 export class MongoManager {
   private client: MongoClient;
@@ -71,6 +73,7 @@ export class MongoManager {
   async saveTransactionsBatch(transactions: Transaction[]): Promise<void> {
     if (transactions.length === 0) return;
     
+    // 1. Primary operation: Save to MongoDB
     const collection = this.getTransactionsCollection();
     const bulkOps = transactions.map(tx => ({
       updateOne: {
@@ -81,6 +84,24 @@ export class MongoManager {
     }));
     
     await collection.bulkWrite(bulkOps, { ordered: false });
+
+    // 2. Secondary operation: Publish to RabbitMQ (non-blocking, best effort)
+    try {
+      const publisher = getPublisher();
+      const messages: TransactionMessage[] = transactions.map(tx => ({
+        signature: tx.signature,
+        slot: tx.slot,
+        blockTime: tx.blockTime,
+        err: tx.err,
+        parsedData: tx.parsedData,
+        createdAt: tx.createdAt,
+      }));
+
+      await publisher.publishBatch(messages);
+    } catch (error) {
+      // Log but don't throw - DB save is more important
+      logger.error('Failed to publish transactions to RabbitMQ', error);
+    }
   }
 
   async getCrawlState(type: 'backfill' | 'forward'): Promise<CrawlState | null> {

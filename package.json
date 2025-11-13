@@ -9,19 +9,24 @@
     "dev": "ts-node src/index.ts",
     "clean": "rm -rf dist"
   },
-  "keywords": ["solana", "crawler", "mongodb"],
+  "keywords": [
+    "solana",
+    "crawler",
+    "mongodb"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@solana/web3.js": "^1.95.2",
-    "mongodb": "^6.3.0",
+    "amqplib": "^0.10.9",
     "dotenv": "^16.4.5",
+    "mongodb": "^6.3.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.8",
     "@types/node": "^20.11.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
 }
-

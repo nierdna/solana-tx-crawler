@@ -4,6 +4,7 @@ import { BackfillService } from './services/backfill';
 import { ForwardCrawler } from './services/forward-crawler';
 import { logger } from './utils/logger';
 import { config } from './config';
+import { initializePublisher, getPublisher } from './queue/rabbitmq-publisher';
 
 class SolanaCrawlerApp {
   private mongoManager: MongoManager;
@@ -31,6 +32,14 @@ class SolanaCrawlerApp {
 
     // Connect to MongoDB
     await this.mongoManager.connect();
+
+    // Initialize RabbitMQ publisher
+    try {
+      await initializePublisher();
+      logger.info('RabbitMQ publisher initialized');
+    } catch (error) {
+      logger.warn('Failed to initialize RabbitMQ publisher, will continue without it', error);
+    }
 
     // Setup graceful shutdown handlers
     this.setupShutdownHandlers();
@@ -165,6 +174,14 @@ class SolanaCrawlerApp {
    * Cleanup and disconnect
    */
   async cleanup(): Promise<void> {
+    // Disconnect RabbitMQ publisher
+    try {
+      const publisher = getPublisher();
+      await publisher.disconnect();
+    } catch (error) {
+      logger.error('Error disconnecting RabbitMQ publisher', error);
+    }
+
     await this.mongoManager.disconnect();
   }
 }

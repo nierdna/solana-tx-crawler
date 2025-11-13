@@ -11,6 +11,9 @@ export const config = {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017',
     database: process.env.MONGODB_DATABASE || 'solana_crawler',
   },
+  rabbitmq: {
+    url: process.env.RABBITMQ_URL || 'amqp://localhost:5672',
+  },
   crawler: {
     batchSize: parseInt(process.env.BATCH_SIZE || '100', 10),
     signaturesBatchSize: parseInt(process.env.SIGNATURES_BATCH_SIZE || '1000', 10),
