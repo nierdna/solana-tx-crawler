@@ -6,7 +6,8 @@ export class RabbitMQPublisher {
   private connection: amqp.ChannelModel | null = null;
   private channel: amqp.Channel | null = null;
   private readonly EXCHANGE = 'ore-transactions';
-  private readonly QUEUE = 'transaction-etl-v2';
+  private readonly QUEUE = 'transaction-etl-v3';
+  private readonly DLQ = 'transaction-etl-dlq';
   private readonly ROUTING_KEY = 'new-transaction';
   private isConnected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -37,9 +38,16 @@ export class RabbitMQPublisher {
         durable: true,
       });
 
-      // Declare queue with persistence and TTL
+      // Setup Dead Letter Queue
+      await channel.assertQueue(this.DLQ, {
+        durable: true,
+      });
+
+      // Declare queue with persistence, TTL and DLQ
       await channel.assertQueue(this.QUEUE, {
         durable: true,
+        deadLetterExchange: '',
+        deadLetterRoutingKey: this.DLQ,
         // messageTtl: 86400000, // 24 hours
         maxLength: 100000, // Max 100k messages in queue
       });
