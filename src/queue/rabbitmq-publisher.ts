@@ -40,7 +40,7 @@ export class RabbitMQPublisher {
       // Declare queue with persistence and TTL
       await channel.assertQueue(this.QUEUE, {
         durable: true,
-        messageTtl: 86400000, // 24 hours
+        // messageTtl: 86400000, // 24 hours
         maxLength: 100000, // Max 100k messages in queue
       });
 
