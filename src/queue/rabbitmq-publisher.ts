@@ -6,7 +6,7 @@ export class RabbitMQPublisher {
   private connection: amqp.ChannelModel | null = null;
   private channel: amqp.Channel | null = null;
   private readonly EXCHANGE = 'ore-transactions';
-  private readonly QUEUE = 'transaction-etl';
+  private readonly QUEUE = 'transaction-etl-v2';
   private readonly ROUTING_KEY = 'new-transaction';
   private isConnected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
